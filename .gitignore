@@ -1,0 +1,4 @@
+# ignore some files and directories
+.DS_store
+email_data/
+.credentials
