@@ -1,6 +1,6 @@
 import imaplib
 import email
-from email.header import decode_header
+# from email.header import decode_header
 import webbrowser
 import os
 import getpass
@@ -12,6 +12,7 @@ import pandas as pd
 from tqdm import tqdm
 import unidecode
 from os.path import exists
+from bs4 import BeautifulSoup
 
 import pdb
 
@@ -22,47 +23,135 @@ class natural_text():
     def __init__(self, msg):
         self.msg = msg
 
-    def unicode_to_ascii(self):
-        self.msg = unidecode.unidecode(self.msg)
-
     def print_msg(self):
         print(self.msg)
 
-    def re_punc(self):
-        self.msg = re.sub("[^-9A-Za-z]", " " , self.msg)
+    def clean_str(self, task):
+    
+        if 'unicode' in task:
+            self.msg = unidecode.unidecode(self.msg)
+        if 'punctuation' in task:
+            self.msg = re.sub(r'[^\w\s]', " " , self.msg)
+        if 'numbers' in task:
+            self.msg = re.sub(r"\w*\d+\w*", " ", self.msg)
+        if 'lower_case' in task:
+            self.msg = "".join([i.lower() for i in self.msg])
+        if 'overspace' in task:
+            self.msg = re.sub(r"\s{2,}", " ", self.msg)
+        if 'stopwords' in task:
+            self.msg = " ".join([i for i in self.msg.split(' ') if i not in stop_words])
 
-    def lower_case(self):
-        self.msg = "".join([i.lower () for i in self.msg])
+def credentials(path):
+    
+    try:
+        with open(path) as f:
+            username, password = f.read().splitlines()
+    except FileNotFoundError:
+        username = input("Enter your email address: ")
+        password = getpass.getpass()
+    except:
+        raise EOFError('Oupsy, it looks like a credential file has been found, '+\
+                       'but it is not correctly formatted.')
 
-    def re_unicode(self):
-        self.msg = self.msg.encode('ascii', 'ignore').decode()
+    return username, password
 
-    def re_stopwords(self):
-        self.msg = " ".join([i for i in self.msg.split(' ') if i not in stop_words])
+def get_subject(msg):
 
-    def re_numbers(self):
-        self.msg = re.sub(r"\w*\d+\w*", " ", self.msg)
+    subject = email.header.decode_header(msg["Subject"])
 
-    def re_overspace(self):
-        self.msg = re.sub(r"\s{2,}", " ", self.msg)
+    subject = [s_i.decode(d_i) if d_i != None else
+               s_i.decode() if isinstance(s_i, bytes) else
+               s_i if isinstance(s_i, str) else
+               'nan' for s_i, d_i in subject]
 
-    def re_oneword(self):
-        self.msg = " ".join([i for i in self.msg.split(' ') if len(i) > 1])
+    if 'nan' in subject:
+        raise AttributeError('A part of the subject was not bytes or str.')
 
-    def re_ticks(self):
-        self.msg = re.sub(r"\'\w+", " ", self.msg)
+    return ' '.join(subject)
 
-    def get_body(self):
-        return self.msg
+
+def get_sender(msg):
+
+    sender = email.header.decode_header(msg.get("From"))
+
+    sender = ' '.join([s_i if isinstance(s_i, str) else
+                       s_i.decode(d_i) if (isinstance(s_i, bytes) and d_i != None)  else
+                       s_i.decode() if (isinstance(s_i, bytes) and d_i == None) else
+                       'nan' for s_i, d_i in sender])
+    if 'nan' in sender:
+        raise AttributeError('A part of the sender was not bytes or str.')
+
+    if ('<' and '>') in sender:
+        sender = re.findall(r".+?(?=<)", sender)
+    elif '@' in sender:
+        sender = ['no info']
+    else:
+        raise ValueError('Oupsy, looks like I cannot define the sender.')
+
+    return sender[0]
+    
+def get_address(msg):
+
+    address = email.header.decode_header(msg.get("From"))
+    address = ' '.join([s_i if isinstance(s_i, str) else
+                       s_i.decode(d_i) if (isinstance(s_i, bytes) and d_i != None)  else
+                       s_i.decode() if (isinstance(s_i, bytes) and d_i == None) else
+                       'nan' for s_i, d_i in address])
+    if 'nan' in address:
+        raise AttributeError('A part of the address was not bytes or str.')
+
+    if ('<' and '>') in address:
+        address = re.findall(r"\<(.*?)\>", address)
+    elif '@' in address:
+        address = [address]
+    else:
+        raise ValueError('Oupsy, looks like I cannot define the address.')
+
+    return address[0]
+
+def get_content(msg):
+
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            content_disposition = str(part.get("Content-Disposition"))
+            content = []
+            if content_type == 'text/plain' and "attachment" not in content_disposition:
+                content.append(part.get_payload())
+            elif content_type == 'text/html':
+                content.append(BeautifulSoup(part.get_payload(), features="html5lib").text)
+            elif content_type.startswith('multipart') or content_type.startswith('image') or (content_type == 'text/calendar'):
+                # these sometimes appear in the content: pass
+                pass
+            else:
+                pdb.set_trace()
+                raise ValueError('content type is not text/plain or contains attachment, or content_type not multipart/alternative')
+
+
+    elif msg.is_multipart() == False:
+        content_type = msg.get_content_type()
+        content_disposition = str(msg.get("Content-Disposition"))
+        if content_type == 'text/plain' and "attachment" not in content_disposition:
+            content = [msg.get_payload()]
+        elif content_type == 'text/html':
+            content = [BeautifulSoup(msg.get_payload(), features="html5lib").text]
+        elif content_type.startswith('multipart') or content_type.startswith('image') or (content_type == 'text/calendar'):
+            # these sometimes appear in the content: pass
+            pass
+        else:
+            raise ValueError('content type is not text/plain or contains attachment, or content_type not multipart/alternative')
+
+    else:
+        raise TypeError('Oupsy, looks like I cannot define the content of the email.')
+
+    return ' '.join(content)
+
 
 
 if __name__ == "__main__":
 
-    try:
-        username, password = open('./.credentials').read().splitlines()
-    except:
-        username = input("Enter your email address: ")
-        password = getpass.getpass()
+    # Get the credentials for the email.
+    username, password = credentials('./.credentials')
 
     # create an IMAP4 class with SSL 
     imap = imaplib.IMAP4_SSL("imap.laposte.net")
@@ -71,132 +160,80 @@ if __name__ == "__main__":
 
     status, messages = imap.select("INBOX")
 
-    # number of top emails to fetch
+    # number of emails to fetch
     N = 500
 
     # total number of emails
     N_email = int(messages[0])
 
-    # Dictionary to store the emails
+    # Create an empty dictionary to store the emails into a DB.
     empty_list=[]
-    empty_list.extend(repeat('nan',N))
+    empty_list.extend(repeat(' ',N))
     df = {"id":empty_list.copy(),
           "subject":empty_list.copy(),
           "from":empty_list.copy(),
           "email":empty_list.copy(),
           "content":empty_list.copy()}
 
-    ind = 0
-    for i in tqdm(range(N_email, N_email-N, -1)):
+    for i in tqdm(range(N)):
 
-        df['id'][ind] = ind+1
+        df['id'][i] = i+1
 
         # fetch the email message by ID
-        res, msg = imap.fetch(str(i), "(RFC822)")
+        res, msg = imap.fetch(str(N_email-i), "(RFC822)")
+
         for response in msg:
+            
             if isinstance(response, tuple):
 
                 # parse a bytes email into a message object
                 msg = email.message_from_bytes(response[1])
 
-                # decode the email subject
-                subject = decode_header(msg["Subject"])
-                subject_iii = []
-                for subject_i in subject:
-                    subject_ii, encoding = subject_i[0], subject_i[1]
+                # decode, clean, and save the email subject
+                subject = get_subject(msg)
+                subject = natural_text(subject)
+                subject.clean_str(['unicode', \
+                                   'punctuation', \
+                                   'numbers', \
+                                   'lower_case', \
+                                   'overspace'])
+                df['subject'][i] = subject.msg
 
-                    if isinstance(subject_ii, bytes) and (encoding != None):
-                        if subject_ii.decode(encoding) != ' ':
-                            subject_iii.append(subject_ii.decode(encoding))
-                    elif isinstance(subject_ii, bytes):
-                        if subject_ii.decode() != ' ':
-                            subject_iii.append(subject_ii.decode())
-                    elif isinstance(subject_ii, str):
-                        subject_iii.append(subject_ii)
-                    else:
-                        pdb.set_trace()
-                        raise ValueError('The subject is not bytes, or str.')
+                # decode, clean, and save the sender
+                sender = get_sender(msg)
+                sender = natural_text(sender)
+                sender.clean_str(['unicode', \
+                                  'punctuation',\
+                                  'lower_case',\
+                                  'overspace'])
+                df['from'][i] = sender.msg
 
-                subject = natural_text(' '.join(subject_iii))
-                subject.unicode_to_ascii()
-                # subject.print_msg()
+                # decode, clean, and save the email address
+                df['email'][i] = get_address(msg)
 
-                df['subject'][ind] = subject.msg
+                # decode, clean, and save the content
+                content = get_content(msg)
+                content = natural_text(content)
+                content.clean_str(['unicode', \
+                                   'punctuation', \
+                                   'numbers', \
+                                   'lower_case', \
+                                   'overspace', \
+                                   'stopwords'])
 
-                # decode email and sender
-                From = decode_header(msg.get("From"))
-                if len(From) == 1:
-                    from_i, encoding = From[0][0], From[0][1]
-
-                    if from_i.endswith('>'):
-                        i = 0
-                        from_ii = []
-                        while from_i[i] != '<':
-                            if from_i[i] not in ['"', '@']:
-                                from_ii.append(from_i[i])
-                            i += 1
-                        df['from'][ind] = ''.join(l for l in from_ii)
-
-                        df['email'][ind] =  re.findall('\<(.*?)\>', from_i)[0]
-
-                    elif isinstance(from_i, str) and ('@' in from_i):
-                        df['from'][ind] = re.findall('\@(.*?)\.', from_i)[0]
-                        df['email'][ind] = from_i
-
-                    else:
-                        raise ValueError('len(From) = 1, and not a string or an email.')
-
-                elif len(From) > 1:
-                    if len(From) == 3:
-                        From = From[1:]
-
-                    from_i, encoding = From[0][0], From[0][1]
-                    if (isinstance(from_i, bytes)) and (encoding != None):
-                        from_i = from_i.decode(encoding)
-                    else:
-                        raise ValueError('from_i is not byte, or encodimg is None.')
-                
-                    df['from'][ind] = from_i
-
-                    email_i, encoding = From[1][0], From[1][1]
-                    if (isinstance(email_i, bytes)) and (encoding != None):
-                        email_i = email_i.decode(encoding)
-                    elif isinstance(email_i, bytes):
-                        email_i = email_i.decode()
-                    else:
-                        raise ValueError('email is not byte.')
-
-                    df['email'][ind] = re.findall('\<(.*?)\>', email_i)[0]
-
-                # # decode email body
-                # # if the email message is multipart
-                # body = None
-                # if msg.is_multipart():
-                #     # iterate over email parts
-                #     for part in msg.walk():
-                #         # extract content type of email
-                #         content_type = part.get_content_type()
-                #         content_disposition = str(part.get("Content-Disposition"))
-                #         if content_type == 'text/plain' and "attachment" not in content_disposition:
-                #             if isinstance(part.get_payload(decode = True), bytes):
-                #                 body = part.get_payload()
-                #             else:
-                #                 body = part.get_payload(decode = True).decode()
-                
-                # else:
-                #     # extract content type of email
-                #     content_type = msg.get_content_type()
-                #     # get the email body
-                #     if content_type == "text/plain":
-                #         body = msg.get_payload()
-            elif isinstance(response, bytes):
+                # content.print_msg()
+                # pdb.set_trace()
+                # df['content'][i] = content
+               
+            elif isinstance(response, bytes) & (response.decode() == ')'):
+                # Sometimes this character comes up in the response => ignored and pass.
                 pass
             else:
                 raise ValueError('sorry, not coded to handle this type of messages.')
 
 
         # if body == None:
-        #     ind += 1
+        #     i += 1
         #     continue
 
         # # Clean the body
@@ -211,10 +248,10 @@ if __name__ == "__main__":
         # content.re_ticks()
 
         # content.print_msg()
-        # print(str(ind) + '--------')
+        # print(str(i) + '--------')
             
-        # df['content'][ind] = content.get_body()
-        ind += 1
+        # df['content'][i] = content.get_body()
+        # ind += 1
 
     imap.close()
     imap.logout()
