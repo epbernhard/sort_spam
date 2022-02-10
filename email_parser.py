@@ -26,19 +26,19 @@ class natural_text():
     def print_msg(self):
         print(self.msg)
 
-    def clean_str(self, task):
+    def clean_str(self, tasks):
     
-        if 'unicode' in task:
+        if 'unicode' in tasks:
             self.msg = unidecode.unidecode(self.msg)
-        if 'punctuation' in task:
+        if 'punctuation' in tasks:
             self.msg = re.sub(r'[^\w\s]', " " , self.msg)
-        if 'numbers' in task:
+        if 'numbers' in tasks:
             self.msg = re.sub(r"\w*\d+\w*", " ", self.msg)
-        if 'lower_case' in task:
+        if 'lower_case' in tasks:
             self.msg = "".join([i.lower() for i in self.msg])
-        if 'overspace' in task:
-            self.msg = re.sub(r"\s{2,}", " ", self.msg)
-        if 'stopwords' in task:
+        if 'overspace' in tasks:
+            self.msg = re.sub(r"\s{2,}", " ", self.msg).strip()
+        if 'stopwords' in tasks:
             self.msg = " ".join([i for i in self.msg.split(' ') if i not in stop_words])
 
 def credentials(path):
@@ -54,6 +54,19 @@ def credentials(path):
                        'but it is not correctly formatted.')
 
     return username, password
+
+
+def extract_html(part):
+
+    soup = BeautifulSoup(part.get_payload(), features="html5lib")
+
+    # kill all script and style elements
+    for script in soup(["script", "style"]):
+        script.extract()    # rip it out
+
+    content_txt = soup.get_text().replace("=\n", '')
+
+    return content_txt
 
 def get_subject(msg):
 
@@ -89,7 +102,8 @@ def get_sender(msg):
         raise ValueError('Oupsy, looks like I cannot define the sender.')
 
     return sender[0]
-    
+
+
 def get_address(msg):
 
     address = email.header.decode_header(msg.get("From"))
@@ -109,24 +123,26 @@ def get_address(msg):
 
     return address[0]
 
+
 def get_content(msg):
 
     if msg.is_multipart():
+        content = []
         for part in msg.walk():
             content_type = part.get_content_type()
             content_disposition = str(part.get("Content-Disposition"))
-            content = []
+
             if content_type == 'text/plain' and "attachment" not in content_disposition:
                 content.append(part.get_payload())
-            elif content_type == 'text/html':
-                content.append(BeautifulSoup(part.get_payload(), features="html5lib").text)
+            elif (content_type == 'text/html') & (len(content) > 0):
+                # Already read the text part, no need for the HTML part
+                pass
+            elif (content_type == 'text/html'):
+                    content.append(extract_html(part))
             elif content_type.startswith('multipart') or content_type.startswith('image') or (content_type == 'text/calendar'):
-                # these sometimes appear in the content: pass
                 pass
             else:
-                pdb.set_trace()
                 raise ValueError('content type is not text/plain or contains attachment, or content_type not multipart/alternative')
-
 
     elif msg.is_multipart() == False:
         content_type = msg.get_content_type()
@@ -134,8 +150,8 @@ def get_content(msg):
         if content_type == 'text/plain' and "attachment" not in content_disposition:
             content = [msg.get_payload()]
         elif content_type == 'text/html':
-            content = [BeautifulSoup(msg.get_payload(), features="html5lib").text]
-        elif content_type.startswith('multipart') or content_type.startswith('image') or (content_type == 'text/calendar'):
+            content = [extract_html(msg)]
+        elif content_type.startswith('image') or (content_type == 'text/calendar'):
             # these sometimes appear in the content: pass
             pass
         else:
@@ -145,8 +161,6 @@ def get_content(msg):
         raise TypeError('Oupsy, looks like I cannot define the content of the email.')
 
     return ' '.join(content)
-
-
 
 if __name__ == "__main__":
 
@@ -221,37 +235,13 @@ if __name__ == "__main__":
                                    'overspace', \
                                    'stopwords'])
 
-                # content.print_msg()
-                # pdb.set_trace()
-                # df['content'][i] = content
+                df['content'][i] = content.msg
                
             elif isinstance(response, bytes) & (response.decode() == ')'):
                 # Sometimes this character comes up in the response => ignored and pass.
                 pass
             else:
                 raise ValueError('sorry, not coded to handle this type of messages.')
-
-
-        # if body == None:
-        #     i += 1
-        #     continue
-
-        # # Clean the body
-        # content = body_text(body)
-        # content.re_punc()
-        # content.lower_case()
-        # content.re_unicode()
-        # content.re_stopwords()
-        # content.re_numbers()
-        # content.re_overspace()
-        # content.re_oneword()
-        # content.re_ticks()
-
-        # content.print_msg()
-        # print(str(i) + '--------')
-            
-        # df['content'][i] = content.get_body()
-        # ind += 1
 
     imap.close()
     imap.logout()
